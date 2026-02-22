@@ -1,57 +1,56 @@
 <?php
 // Production-ready database configuration
-// Use environment variables for security, fallback to live server credentials.
-// Supports DATABASE_URL (e.g. from DigitalOcean App Platform) or separate DB_* vars.
-$db_host = 'localhost';
-$db_username = 'root';
-$db_password = '';
-$db_name = 'scc_dms';
+// Use environment variables for security, fallback to live server credentials
 
-$db_port = 3306;
-
-$database_url = getenv('DATABASE_URL');
-if (!empty($database_url)) {
-    // Parse DATABASE_URL (e.g. mysql://user:pass@host:port/dbname)
-    $url = parse_url($database_url);
-    if (!empty($url['host'])) {
-        $db_host = $url['host'];
-        $db_username = isset($url['user']) ? $url['user'] : $db_username;
-        $db_password = isset($url['pass']) ? $url['pass'] : $db_password;
-        $db_name = isset($url['path']) ? ltrim($url['path'], '/') : $db_name;
-        if (($q = strpos($db_name, '?')) !== false) {
-            $db_name = substr($db_name, 0, $q);
+// Load .env file if it exists (for easier configuration)
+if (file_exists(__DIR__ . '/../.env')) {
+    $envFile = file(__DIR__ . '/../.env', FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+    foreach ($envFile as $line) {
+        // Skip comments and empty lines
+        if (strpos(trim($line), '#') === 0 || empty(trim($line))) {
+            continue;
         }
-        if (!empty($url['port'])) {
-            $db_port = (int) $url['port'];
+        // Parse KEY=VALUE format
+        if (strpos($line, '=') !== false) {
+            list($key, $value) = explode('=', $line, 2);
+            $key = trim($key);
+            $value = trim($value);
+            // Remove quotes if present
+            $value = trim($value, '"\'');
+            // Set environment variable if not already set
+            if (!getenv($key)) {
+                putenv("$key=$value");
+                $_ENV[$key] = $value;
+                $_SERVER[$key] = $value;
+            }
         }
-    }
-    // Allow DB_NAME override (e.g. use scc_dms when DATABASE_URL points to defaultdb)
-    $db_name_override = getenv('DB_NAME');
-    if ($db_name_override !== false && $db_name_override !== '') {
-        $db_name = $db_name_override;
-    }
-} else {
-    $db_host = getenv('DB_HOST') ?: $db_host;
-    $db_username = getenv('DB_USERNAME') ?: $db_username;
-    $db_password = getenv('DB_PASSWORD') ?: $db_password;
-    $db_name = getenv('DB_NAME') ?: $db_name;
-    $port_env = getenv('DB_PORT');
-    if ($port_env !== false && $port_env !== '') {
-        $db_port = (int) $port_env;
     }
 }
 
-// Force TCP: avoid "No such file or directory" from Unix socket when host is localhost
-if ($db_host === 'localhost' || $db_host === '') {
-    $db_host = '127.0.0.1';
+$db_host = getenv('DB_HOST') ?: 'localhost';
+$db_username = getenv('DB_USERNAME') ?: 'root';
+$db_password = getenv('DB_PASSWORD') ?: '';
+$db_name = getenv('DB_NAME') ?: 'scc_dms';
+
+// Application timezone (defaults to Asia/Manila but can be overridden via APP_TIMEZONE)
+$app_timezone_name = getenv('APP_TIMEZONE') ?: 'Asia/Manila';
+try {
+    $app_timezone = new DateTimeZone($app_timezone_name);
+} catch (Exception $e) {
+    error_log("Invalid APP_TIMEZONE '{$app_timezone_name}', falling back to UTC.");
+    $app_timezone = new DateTimeZone('UTC');
 }
+date_default_timezone_set($app_timezone->getName());
 
 // Security settings
 $conn = null;
 
 try {
-    // Plain TCP connection (DO may require SSL - if so we'll need CA cert in a follow-up)
-    $conn = new mysqli($db_host, $db_username, $db_password, $db_name, $db_port);
+    // Create connection with proper charset and options
+    $conn = new mysqli($db_host, $db_username, $db_password, $db_name);
+    
+    // Ensure MySQL session uses the same timezone as PHP
+    $conn->query("SET time_zone = '" . (new DateTime('now', $app_timezone))->format('P') . "'");
     
     // Set charset to prevent SQL injection
     $conn->set_charset("utf8mb4");
@@ -74,6 +73,9 @@ try {
             die("System temporarily unavailable. Please try again later.");
         }
     }
+    
+    // Set connection timeout
+    $conn->options(MYSQLI_OPT_CONNECT_TIMEOUT, 5);
     
 } catch (Exception $e) {
     error_log("Database error: " . $e->getMessage());
