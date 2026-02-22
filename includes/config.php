@@ -1,58 +1,84 @@
 <?php
-// Production-ready database configuration
-// Use environment variables for security, fallback to live server credentials.
-// Supports DATABASE_URL (e.g. from DigitalOcean App Platform) or separate DB_* vars.
-$db_host = 'localhost';
-$db_username = 'root';
-$db_password = '';
-$db_name = 'scc_dms';
-
+// Database configuration (local + DigitalOcean App Platform).
+//
+// DigitalOcean: either (a) link DB in App Platform and set DB_NAME=defaultdb, or (b) set:
+//   DB_HOST, DB_USERNAME, DB_PASSWORD, DB_NAME=defaultdb, DB_PORT=25060
+//   (sslmode=REQUIRED is handled automatically for *.ondigitalocean.com hosts.)
+// Local: DB_HOST, DB_USERNAME, DB_PASSWORD, DB_NAME (or .env).
+$db_host = getenv('DB_HOST') ?: 'localhost';
+$db_username = getenv('DB_USERNAME') ?: 'root';
+$db_password = getenv('DB_PASSWORD') ?: '';
+$db_name = getenv('DB_NAME') ?: 'scc_dms';
 $db_port = 3306;
 
 $database_url = getenv('DATABASE_URL');
 if (!empty($database_url)) {
-    // Parse DATABASE_URL (e.g. mysql://user:pass@host:port/dbname)
-    $url = parse_url($database_url);
+    $url = @parse_url($database_url);
     if (!empty($url['host'])) {
         $db_host = $url['host'];
-        $db_username = isset($url['user']) ? $url['user'] : $db_username;
-        $db_password = isset($url['pass']) ? $url['pass'] : $db_password;
-        $db_name = isset($url['path']) ? ltrim($url['path'], '/') : $db_name;
-        if (($q = strpos($db_name, '?')) !== false) {
-            $db_name = substr($db_name, 0, $q);
+        $db_username = isset($url['user']) ? rawurldecode($url['user']) : $db_username;
+        $db_password = isset($url['pass']) ? rawurldecode($url['pass']) : $db_password;
+        $path = isset($url['path']) ? ltrim($url['path'], '/') : '';
+        if ($path !== '') {
+            $db_name = (strpos($path, '?') !== false) ? strstr($path, '?', true) : $path;
         }
         if (!empty($url['port'])) {
             $db_port = (int) $url['port'];
         }
     }
-    // Allow DB_NAME override (e.g. use scc_dms when DATABASE_URL points to defaultdb)
     $db_name_override = getenv('DB_NAME');
     if ($db_name_override !== false && $db_name_override !== '') {
         $db_name = $db_name_override;
     }
 } else {
-    $db_host = getenv('DB_HOST') ?: $db_host;
-    $db_username = getenv('DB_USERNAME') ?: $db_username;
-    $db_password = getenv('DB_PASSWORD') ?: $db_password;
-    $db_name = getenv('DB_NAME') ?: $db_name;
     $port_env = getenv('DB_PORT');
     if ($port_env !== false && $port_env !== '') {
         $db_port = (int) $port_env;
     }
 }
 
-// Security settings
+// Force TCP (avoid Unix socket "No such file or directory")
+if ($db_host === 'localhost' || $db_host === '') {
+    $db_host = '127.0.0.1';
+}
+
 $conn = null;
+$is_do_host = (strpos($db_host, 'ondigitalocean.com') !== false);
+$use_ssl_ca = getenv('DB_SSL_CA');
+$use_ssl_ca = ($use_ssl_ca !== false && $use_ssl_ca !== '' && is_readable($use_ssl_ca));
 
 try {
-    // Try SSL first (DO Managed MySQL requires it), fallback to plain
-    $conn = mysqli_init();
-    if ($conn) {
-        $conn->options(MYSQLI_OPT_CONNECT_TIMEOUT, 5);
-        $ok = @$conn->real_connect($db_host, $db_username, $db_password, $db_name, $db_port, null, MYSQLI_CLIENT_SSL | MYSQLI_CLIENT_SSL_DONT_VERIFY_SERVER_CERT);
+    // Optional: explicit CA cert path (e.g. DB_SSL_CA=/path/to/ca-certificate.crt)
+    if ($use_ssl_ca) {
+        $conn = mysqli_init();
+        $conn->options(MYSQLI_OPT_CONNECT_TIMEOUT, 10);
+        $conn->ssl_set(null, null, getenv('DB_SSL_CA'), null, null);
+        $ok = $conn->real_connect($db_host, $db_username, $db_password, $db_name, $db_port, null, MYSQLI_CLIENT_SSL);
+        if (!$ok) {
+            $conn = null;
+        }
     }
-    if (!$conn || empty($ok)) {
+    // DigitalOcean MySQL (sslmode=REQUIRED): use SSL without cert verification (no ssl_set to avoid "No such file or directory")
+    if (!$conn && $is_do_host && defined('MYSQLI_CLIENT_SSL') && defined('MYSQLI_CLIENT_SSL_DONT_VERIFY_SERVER_CERT')) {
+        $conn = mysqli_init();
+        $conn->options(MYSQLI_OPT_CONNECT_TIMEOUT, 10);
+        $ok = @$conn->real_connect($db_host, $db_username, $db_password, $db_name, $db_port, null, MYSQLI_CLIENT_SSL | MYSQLI_CLIENT_SSL_DONT_VERIFY_SERVER_CERT);
+        if (!$ok) {
+            $conn = null;
+        }
+    }
+    if (!$conn) {
         $conn = new mysqli($db_host, $db_username, $db_password, $db_name, $db_port);
+    }
+    // If plain connection failed (e.g. "SSL required"), retry with SSL
+    if ($conn && $conn->connect_error && !$is_do_host && defined('MYSQLI_CLIENT_SSL_DONT_VERIFY_SERVER_CERT')) {
+        $conn->close();
+        $conn = mysqli_init();
+        $conn->options(MYSQLI_OPT_CONNECT_TIMEOUT, 10);
+        $ok = @$conn->real_connect($db_host, $db_username, $db_password, $db_name, $db_port, null, MYSQLI_CLIENT_SSL | MYSQLI_CLIENT_SSL_DONT_VERIFY_SERVER_CERT);
+        if (!$ok) {
+            $conn = new mysqli($db_host, $db_username, $db_password, $db_name, $db_port);
+        }
     }
     
     // Set charset to prevent SQL injection
