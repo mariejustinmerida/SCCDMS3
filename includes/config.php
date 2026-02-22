@@ -25,6 +25,11 @@ if (!empty($database_url)) {
             $db_port = (int) $url['port'];
         }
     }
+    // Allow DB_NAME override (e.g. use scc_dms when DATABASE_URL points to defaultdb)
+    $db_name_override = getenv('DB_NAME');
+    if ($db_name_override !== false && $db_name_override !== '') {
+        $db_name = $db_name_override;
+    }
 } else {
     $db_host = getenv('DB_HOST') ?: $db_host;
     $db_username = getenv('DB_USERNAME') ?: $db_username;
@@ -40,8 +45,18 @@ if (!empty($database_url)) {
 $conn = null;
 
 try {
-    // Create connection with proper charset and options
-    $conn = new mysqli($db_host, $db_username, $db_password, $db_name, $db_port);
+    // DigitalOcean Managed MySQL requires SSL - use mysqli_init + real_connect with SSL
+    $conn = mysqli_init();
+    if (!$conn) {
+        throw new Exception('mysqli_init failed');
+    }
+    $conn->options(MYSQLI_OPT_CONNECT_TIMEOUT, 5);
+    // Enable SSL for DO Managed MySQL (sslmode=REQUIRED)
+    @$conn->ssl_set(null, null, null, null, null);
+    if (!@$conn->real_connect($db_host, $db_username, $db_password, $db_name, $db_port, null, MYSQLI_CLIENT_SSL)) {
+        $err = $conn->connect_error ?: 'Connection failed';
+        throw new Exception($err);
+    }
     
     // Set charset to prevent SQL injection
     $conn->set_charset("utf8mb4");
@@ -64,9 +79,6 @@ try {
             die("System temporarily unavailable. Please try again later.");
         }
     }
-    
-    // Set connection timeout
-    $conn->options(MYSQLI_OPT_CONNECT_TIMEOUT, 5);
     
 } catch (Exception $e) {
     error_log("Database error: " . $e->getMessage());
