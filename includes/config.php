@@ -1,23 +1,15 @@
 <?php
-// Production-ready database configuration
-// Use environment variables for security, fallback to live server credentials
+// Database configuration — local (.env) and DigitalOcean App Platform (DATABASE_URL / DB_* env vars).
 
-// Load .env file if it exists (for easier configuration)
+// Load .env file if it exists (for local development)
 if (file_exists(__DIR__ . '/../.env')) {
     $envFile = file(__DIR__ . '/../.env', FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
     foreach ($envFile as $line) {
-        // Skip comments and empty lines
-        if (strpos(trim($line), '#') === 0 || empty(trim($line))) {
-            continue;
-        }
-        // Parse KEY=VALUE format
+        if (strpos(trim($line), '#') === 0 || empty(trim($line))) continue;
         if (strpos($line, '=') !== false) {
             list($key, $value) = explode('=', $line, 2);
             $key = trim($key);
-            $value = trim($value);
-            // Remove quotes if present
-            $value = trim($value, '"\'');
-            // Set environment variable if not already set
+            $value = trim(trim($value), '"\'');
             if (!getenv($key)) {
                 putenv("$key=$value");
                 $_ENV[$key] = $value;
@@ -27,61 +19,82 @@ if (file_exists(__DIR__ . '/../.env')) {
     }
 }
 
-$db_host = getenv('DB_HOST') ?: 'localhost';
-$db_username = getenv('DB_USERNAME') ?: 'root';
-$db_password = getenv('DB_PASSWORD') ?: '';
-$db_name = getenv('DB_NAME') ?: 'scc_dms';
-
-// Application timezone (defaults to Asia/Manila but can be overridden via APP_TIMEZONE)
+// Timezone
 $app_timezone_name = getenv('APP_TIMEZONE') ?: 'Asia/Manila';
 try {
     $app_timezone = new DateTimeZone($app_timezone_name);
 } catch (Exception $e) {
-    error_log("Invalid APP_TIMEZONE '{$app_timezone_name}', falling back to UTC.");
     $app_timezone = new DateTimeZone('UTC');
 }
 date_default_timezone_set($app_timezone->getName());
 
-// Security settings
+// Default DB settings (overridden by DATABASE_URL or explicit DB_* env vars below)
+$db_host = getenv('DB_HOST') ?: 'localhost';
+$db_username = getenv('DB_USERNAME') ?: 'root';
+$db_password = getenv('DB_PASSWORD') ?: '';
+$db_name = getenv('DB_NAME') ?: 'scc_dms';
+$db_port = 3306;
+
+// DigitalOcean App Platform: parse DATABASE_URL when set
+$database_url = getenv('DATABASE_URL');
+if (!empty($database_url)) {
+    $url = @parse_url($database_url);
+    if (!empty($url['host'])) {
+        $db_host = $url['host'];
+        $db_username = isset($url['user']) ? rawurldecode($url['user']) : $db_username;
+        $db_password = isset($url['pass']) ? rawurldecode($url['pass']) : $db_password;
+        $path = isset($url['path']) ? ltrim($url['path'], '/') : '';
+        if ($path !== '') {
+            $db_name = (strpos($path, '?') !== false) ? strstr($path, '?', true) : $path;
+        }
+        if (!empty($url['port'])) {
+            $db_port = (int) $url['port'];
+        }
+    }
+    // DB_NAME overrides the database from DATABASE_URL (e.g. use defaultdb instead of scc_dms)
+    $db_name_override = getenv('DB_NAME');
+    if ($db_name_override !== false && $db_name_override !== '') {
+        $db_name = $db_name_override;
+    }
+} else {
+    $port_env = getenv('DB_PORT');
+    if ($port_env !== false && $port_env !== '') $db_port = (int) $port_env;
+}
+
+// Force TCP — avoid Unix socket "No such file or directory"
+if ($db_host === 'localhost' || $db_host === '') $db_host = '127.0.0.1';
+
 $conn = null;
 
 try {
-<<<<<<< HEAD
-    // Plain TCP connection only (SSL attempts caused "No such file or directory" in DO container)
     $conn = new mysqli($db_host, $db_username, $db_password, $db_name, $db_port);
-=======
-    // Create connection with proper charset and options
-    $conn = new mysqli($db_host, $db_username, $db_password, $db_name);
-    
-    // Ensure MySQL session uses the same timezone as PHP
-    $conn->query("SET time_zone = '" . (new DateTime('now', $app_timezone))->format('P') . "'");
->>>>>>> d56aff861370a9c3863f43fb11acb3db7f07d964
-    
+
+    // Sync MySQL session timezone with PHP
+    if (!$conn->connect_error) {
+        $conn->query("SET time_zone = '" . (new DateTime('now', $app_timezone))->format('P') . "'");
+    }
+
     // Set charset to prevent SQL injection
     $conn->set_charset("utf8mb4");
-    
+
     // Set SQL mode for better data integrity
     $conn->query("SET sql_mode = 'STRICT_TRANS_TABLES,NO_ZERO_DATE,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO'");
-    
+
     // Check connection
     if ($conn->connect_error) {
         error_log("Database connection failed: " . $conn->connect_error);
-        
-        // If this is an API request, return JSON error
         if (isset($_SERVER['REQUEST_URI']) && strpos($_SERVER['REQUEST_URI'], '/api/') !== false) {
             header('Content-Type: application/json');
             http_response_code(500);
             echo json_encode(['success' => false, 'error' => 'Database connection failed']);
             exit;
         } else {
-            // For regular pages, show generic error
             die("System temporarily unavailable. Please try again later.");
         }
     }
-    
-    // Set connection timeout
+
     $conn->options(MYSQLI_OPT_CONNECT_TIMEOUT, 5);
-    
+
 } catch (Exception $e) {
     error_log("Database error: " . $e->getMessage());
     
