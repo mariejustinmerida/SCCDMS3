@@ -45,17 +45,14 @@ if (!empty($database_url)) {
 $conn = null;
 
 try {
-    // DigitalOcean Managed MySQL requires SSL - use mysqli_init + real_connect with SSL
+    // Try SSL first (DO Managed MySQL requires it), fallback to plain
     $conn = mysqli_init();
-    if (!$conn) {
-        throw new Exception('mysqli_init failed');
+    if ($conn) {
+        $conn->options(MYSQLI_OPT_CONNECT_TIMEOUT, 5);
+        $ok = @$conn->real_connect($db_host, $db_username, $db_password, $db_name, $db_port, null, MYSQLI_CLIENT_SSL | MYSQLI_CLIENT_SSL_DONT_VERIFY_SERVER_CERT);
     }
-    $conn->options(MYSQLI_OPT_CONNECT_TIMEOUT, 5);
-    // Enable SSL for DO Managed MySQL (sslmode=REQUIRED)
-    @$conn->ssl_set(null, null, null, null, null);
-    if (!@$conn->real_connect($db_host, $db_username, $db_password, $db_name, $db_port, null, MYSQLI_CLIENT_SSL)) {
-        $err = $conn->connect_error ?: 'Connection failed';
-        throw new Exception($err);
+    if (!$conn || empty($ok)) {
+        $conn = new mysqli($db_host, $db_username, $db_password, $db_name, $db_port);
     }
     
     // Set charset to prevent SQL injection
