@@ -41,19 +41,17 @@ if (!empty($database_url)) {
     }
 }
 
+// Force TCP: avoid "No such file or directory" from Unix socket when host is localhost
+if ($db_host === 'localhost' || $db_host === '') {
+    $db_host = '127.0.0.1';
+}
+
 // Security settings
 $conn = null;
 
 try {
-    // Try SSL first (DO Managed MySQL requires it), fallback to plain
-    $conn = mysqli_init();
-    if ($conn) {
-        $conn->options(MYSQLI_OPT_CONNECT_TIMEOUT, 5);
-        $ok = @$conn->real_connect($db_host, $db_username, $db_password, $db_name, $db_port, null, MYSQLI_CLIENT_SSL | MYSQLI_CLIENT_SSL_DONT_VERIFY_SERVER_CERT);
-    }
-    if (!$conn || empty($ok)) {
-        $conn = new mysqli($db_host, $db_username, $db_password, $db_name, $db_port);
-    }
+    // Plain TCP connection (DO may require SSL - if so we'll need CA cert in a follow-up)
+    $conn = new mysqli($db_host, $db_username, $db_password, $db_name, $db_port);
     
     // Set charset to prevent SQL injection
     $conn->set_charset("utf8mb4");
