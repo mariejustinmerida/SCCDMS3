@@ -43,43 +43,10 @@ if ($db_host === 'localhost' || $db_host === '') {
 }
 
 $conn = null;
-$is_do_host = (strpos($db_host, 'ondigitalocean.com') !== false);
-$use_ssl_ca = getenv('DB_SSL_CA');
-$use_ssl_ca = ($use_ssl_ca !== false && $use_ssl_ca !== '' && is_readable($use_ssl_ca));
 
 try {
-    // Optional: explicit CA cert path (e.g. DB_SSL_CA=/path/to/ca-certificate.crt)
-    if ($use_ssl_ca) {
-        $conn = mysqli_init();
-        $conn->options(MYSQLI_OPT_CONNECT_TIMEOUT, 10);
-        $conn->ssl_set(null, null, getenv('DB_SSL_CA'), null, null);
-        $ok = $conn->real_connect($db_host, $db_username, $db_password, $db_name, $db_port, null, MYSQLI_CLIENT_SSL);
-        if (!$ok) {
-            $conn = null;
-        }
-    }
-    // DigitalOcean MySQL (sslmode=REQUIRED): use SSL without cert verification (no ssl_set to avoid "No such file or directory")
-    if (!$conn && $is_do_host && defined('MYSQLI_CLIENT_SSL') && defined('MYSQLI_CLIENT_SSL_DONT_VERIFY_SERVER_CERT')) {
-        $conn = mysqli_init();
-        $conn->options(MYSQLI_OPT_CONNECT_TIMEOUT, 10);
-        $ok = @$conn->real_connect($db_host, $db_username, $db_password, $db_name, $db_port, null, MYSQLI_CLIENT_SSL | MYSQLI_CLIENT_SSL_DONT_VERIFY_SERVER_CERT);
-        if (!$ok) {
-            $conn = null;
-        }
-    }
-    if (!$conn) {
-        $conn = new mysqli($db_host, $db_username, $db_password, $db_name, $db_port);
-    }
-    // If plain connection failed (e.g. "SSL required"), retry with SSL
-    if ($conn && $conn->connect_error && !$is_do_host && defined('MYSQLI_CLIENT_SSL_DONT_VERIFY_SERVER_CERT')) {
-        $conn->close();
-        $conn = mysqli_init();
-        $conn->options(MYSQLI_OPT_CONNECT_TIMEOUT, 10);
-        $ok = @$conn->real_connect($db_host, $db_username, $db_password, $db_name, $db_port, null, MYSQLI_CLIENT_SSL | MYSQLI_CLIENT_SSL_DONT_VERIFY_SERVER_CERT);
-        if (!$ok) {
-            $conn = new mysqli($db_host, $db_username, $db_password, $db_name, $db_port);
-        }
-    }
+    // Plain TCP connection only (SSL attempts caused "No such file or directory" in DO container)
+    $conn = new mysqli($db_host, $db_username, $db_password, $db_name, $db_port);
     
     // Set charset to prevent SQL injection
     $conn->set_charset("utf8mb4");
