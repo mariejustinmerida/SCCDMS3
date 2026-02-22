@@ -1,85 +1,56 @@
 <?php
-// Database configuration (local + DigitalOcean App Platform).
-//
-// DigitalOcean: either (a) link DB in App Platform and set DB_NAME=defaultdb, or (b) set:
-//   DB_HOST, DB_USERNAME, DB_PASSWORD, DB_NAME=defaultdb, DB_PORT=25060
-//   (sslmode=REQUIRED is handled automatically for *.ondigitalocean.com hosts.)
-// Local: DB_HOST, DB_USERNAME, DB_PASSWORD, DB_NAME (or .env).
+// Production-ready database configuration
+// Use environment variables for security, fallback to live server credentials
+
+// Load .env file if it exists (for easier configuration)
+if (file_exists(__DIR__ . '/../.env')) {
+    $envFile = file(__DIR__ . '/../.env', FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+    foreach ($envFile as $line) {
+        // Skip comments and empty lines
+        if (strpos(trim($line), '#') === 0 || empty(trim($line))) {
+            continue;
+        }
+        // Parse KEY=VALUE format
+        if (strpos($line, '=') !== false) {
+            list($key, $value) = explode('=', $line, 2);
+            $key = trim($key);
+            $value = trim($value);
+            // Remove quotes if present
+            $value = trim($value, '"\'');
+            // Set environment variable if not already set
+            if (!getenv($key)) {
+                putenv("$key=$value");
+                $_ENV[$key] = $value;
+                $_SERVER[$key] = $value;
+            }
+        }
+    }
+}
+
 $db_host = getenv('DB_HOST') ?: 'localhost';
 $db_username = getenv('DB_USERNAME') ?: 'root';
 $db_password = getenv('DB_PASSWORD') ?: '';
 $db_name = getenv('DB_NAME') ?: 'scc_dms';
-$db_port = 3306;
 
-$database_url = getenv('DATABASE_URL');
-if (!empty($database_url)) {
-    $url = @parse_url($database_url);
-    if (!empty($url['host'])) {
-        $db_host = $url['host'];
-        $db_username = isset($url['user']) ? rawurldecode($url['user']) : $db_username;
-        $db_password = isset($url['pass']) ? rawurldecode($url['pass']) : $db_password;
-        $path = isset($url['path']) ? ltrim($url['path'], '/') : '';
-        if ($path !== '') {
-            $db_name = (strpos($path, '?') !== false) ? strstr($path, '?', true) : $path;
-        }
-        if (!empty($url['port'])) {
-            $db_port = (int) $url['port'];
-        }
-    }
-    $db_name_override = getenv('DB_NAME');
-    if ($db_name_override !== false && $db_name_override !== '') {
-        $db_name = $db_name_override;
-    }
-} else {
-    $port_env = getenv('DB_PORT');
-    if ($port_env !== false && $port_env !== '') {
-        $db_port = (int) $port_env;
-    }
+// Application timezone (defaults to Asia/Manila but can be overridden via APP_TIMEZONE)
+$app_timezone_name = getenv('APP_TIMEZONE') ?: 'Asia/Manila';
+try {
+    $app_timezone = new DateTimeZone($app_timezone_name);
+} catch (Exception $e) {
+    error_log("Invalid APP_TIMEZONE '{$app_timezone_name}', falling back to UTC.");
+    $app_timezone = new DateTimeZone('UTC');
 }
+date_default_timezone_set($app_timezone->getName());
 
-// Force TCP (avoid Unix socket "No such file or directory")
-if ($db_host === 'localhost' || $db_host === '') {
-    $db_host = '127.0.0.1';
-}
-
+// Security settings
 $conn = null;
-$is_do_host = (strpos($db_host, 'ondigitalocean.com') !== false);
-$use_ssl_ca = getenv('DB_SSL_CA');
-$use_ssl_ca = ($use_ssl_ca !== false && $use_ssl_ca !== '' && is_readable($use_ssl_ca));
 
 try {
-    // Optional: explicit CA cert path (e.g. DB_SSL_CA=/path/to/ca-certificate.crt)
-    if ($use_ssl_ca) {
-        $conn = mysqli_init();
-        $conn->options(MYSQLI_OPT_CONNECT_TIMEOUT, 10);
-        $conn->ssl_set(null, null, getenv('DB_SSL_CA'), null, null);
-        $ok = $conn->real_connect($db_host, $db_username, $db_password, $db_name, $db_port, null, MYSQLI_CLIENT_SSL);
-        if (!$ok) {
-            $conn = null;
-        }
-    }
-    // DigitalOcean MySQL (sslmode=REQUIRED): use SSL without cert verification (no ssl_set to avoid "No such file or directory")
-    if (!$conn && $is_do_host && defined('MYSQLI_CLIENT_SSL') && defined('MYSQLI_CLIENT_SSL_DONT_VERIFY_SERVER_CERT')) {
-        $conn = mysqli_init();
-        $conn->options(MYSQLI_OPT_CONNECT_TIMEOUT, 10);
-        $ok = @$conn->real_connect($db_host, $db_username, $db_password, $db_name, $db_port, null, MYSQLI_CLIENT_SSL | MYSQLI_CLIENT_SSL_DONT_VERIFY_SERVER_CERT);
-        if (!$ok) {
-            $conn = null;
-        }
-    }
-    if (!$conn) {
-        $conn = new mysqli($db_host, $db_username, $db_password, $db_name, $db_port);
-    }
-    // If plain connection failed (e.g. "SSL required"), retry with SSL
-    if ($conn && $conn->connect_error && !$is_do_host && defined('MYSQLI_CLIENT_SSL_DONT_VERIFY_SERVER_CERT')) {
-        $conn->close();
-        $conn = mysqli_init();
-        $conn->options(MYSQLI_OPT_CONNECT_TIMEOUT, 10);
-        $ok = @$conn->real_connect($db_host, $db_username, $db_password, $db_name, $db_port, null, MYSQLI_CLIENT_SSL | MYSQLI_CLIENT_SSL_DONT_VERIFY_SERVER_CERT);
-        if (!$ok) {
-            $conn = new mysqli($db_host, $db_username, $db_password, $db_name, $db_port);
-        }
-    }
+    // Create connection with proper charset and options
+    $conn = new mysqli($db_host, $db_username, $db_password, $db_name);
+    
+    // Ensure MySQL session uses the same timezone as PHP
+    $conn->query("SET time_zone = '" . (new DateTime('now', $app_timezone))->format('P') . "'");
     
     // Set charset to prevent SQL injection
     $conn->set_charset("utf8mb4");
@@ -102,6 +73,9 @@ try {
             die("System temporarily unavailable. Please try again later.");
         }
     }
+    
+    // Set connection timeout
+    $conn->options(MYSQLI_OPT_CONNECT_TIMEOUT, 5);
     
 } catch (Exception $e) {
     error_log("Database error: " . $e->getMessage());
