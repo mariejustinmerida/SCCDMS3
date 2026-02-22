@@ -1,0 +1,17 @@
+# DigitalOcean App Platform spec — use PHP (not Python) for this repo.
+# After creating the app in the UI, open Settings → App Spec → Edit and add
+# environment_slug: php under the sccdms3 service, or paste this block.
+name: lionfish-app
+region: sgp1
+
+services:
+  - name: sccdms3
+    environment_slug: php
+    github:
+      repo: mariejustinmerida/SCCDMS3
+      branch: main
+      deploy_on_push: true
+    source_dir: /
+    http_port: 8080
+    instance_count: 1
+    instance_size_slug: basic-xxs

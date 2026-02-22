@@ -1,17 +1,47 @@
 <?php
 // Production-ready database configuration
-// Use environment variables for security, fallback to live server credentials
-$db_host = getenv('DB_HOST') ?: 'localhost';
-$db_username = getenv('DB_USERNAME') ?: 'root';
-$db_password = getenv('DB_PASSWORD') ?: '';
-$db_name = getenv('DB_NAME') ?: 'scc_dms';
+// Use environment variables for security, fallback to live server credentials.
+// Supports DATABASE_URL (e.g. from DigitalOcean App Platform) or separate DB_* vars.
+$db_host = 'localhost';
+$db_username = 'root';
+$db_password = '';
+$db_name = 'scc_dms';
+
+$db_port = 3306;
+
+$database_url = getenv('DATABASE_URL');
+if (!empty($database_url)) {
+    // Parse DATABASE_URL (e.g. mysql://user:pass@host:port/dbname)
+    $url = parse_url($database_url);
+    if (!empty($url['host'])) {
+        $db_host = $url['host'];
+        $db_username = isset($url['user']) ? $url['user'] : $db_username;
+        $db_password = isset($url['pass']) ? $url['pass'] : $db_password;
+        $db_name = isset($url['path']) ? ltrim($url['path'], '/') : $db_name;
+        if (($q = strpos($db_name, '?')) !== false) {
+            $db_name = substr($db_name, 0, $q);
+        }
+        if (!empty($url['port'])) {
+            $db_port = (int) $url['port'];
+        }
+    }
+} else {
+    $db_host = getenv('DB_HOST') ?: $db_host;
+    $db_username = getenv('DB_USERNAME') ?: $db_username;
+    $db_password = getenv('DB_PASSWORD') ?: $db_password;
+    $db_name = getenv('DB_NAME') ?: $db_name;
+    $port_env = getenv('DB_PORT');
+    if ($port_env !== false && $port_env !== '') {
+        $db_port = (int) $port_env;
+    }
+}
 
 // Security settings
 $conn = null;
 
 try {
     // Create connection with proper charset and options
-    $conn = new mysqli($db_host, $db_username, $db_password, $db_name);
+    $conn = new mysqli($db_host, $db_username, $db_password, $db_name, $db_port);
     
     // Set charset to prevent SQL injection
     $conn->set_charset("utf8mb4");

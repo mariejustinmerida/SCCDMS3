@@ -1,0 +1,15 @@
+# Don't copy into image (we run composer install in Dockerfile)
+/vendor
+.git
+.gitignore
+*.md
+.env
+.env.*
+includes/.env
+.idea
+node_modules
+storage/documents/*
+storage/logs/*
+storage/profiles/*
+storage/uploads/*
+!.gitkeep
