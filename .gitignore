@@ -1,0 +1,52 @@
+# Dependencies
+/vendor/
+
+# Environment and secrets (never commit)
+.env
+.env.*
+!.env.example
+includes/.env
+config/*.env
+!config/production.env.example
+# Google service account key (never commit)
+sccdms-*.json
+**/google*service*account*.json
+**/credentials*.json
+
+# Storage and uploads (runtime data and secrets)
+/storage/documents/*
+!/storage/documents/.gitkeep
+/storage/logs/*
+!/storage/logs/.gitkeep
+/storage/profiles/*
+!/storage/profiles/.gitkeep
+/storage/uploads/*
+!/storage/uploads/.gitkeep
+/storage/local_documents/
+/storage/*.json
+/storage/approved_documents.json
+
+# IDE and editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Composer (commit composer.lock for reproducible installs)
+composer.phar
+
+# Temporary and cache
+*.log
+/tmp/
+/temp/
+*.tmp
+*.cache
+
+# MCP / Cursor (optional)
+mcps/

@@ -1,0 +1,550 @@
+<?php
+require_once '../includes/config.php';
+require_once '../includes/file_helpers.php';
+
+// Check if user is logged in
+if (!isset($_SESSION['user_id'])) {
+    header("Location: login.php");
+    exit();
+}
+
+// Get user information
+$user_id = $_SESSION['user_id'];
+$stmt = $conn->prepare("SELECT u.*, o.office_name FROM users u JOIN offices o ON u.office_id = o.office_id WHERE u.user_id = ?");
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$user = $stmt->get_result()->fetch_assoc();
+
+// Pagination settings
+$items_per_page = isset($_GET['show']) ? (int)$_GET['show'] : 15;
+$current_page = isset($_GET['page']) ? max(1, (int)$_GET['page']) : 1;
+$offset = ($current_page - 1) * $items_per_page;
+
+// Search functionality
+$search_term = isset($_GET['search']) ? trim($_GET['search']) : '';
+$search_condition = '';
+if (!empty($search_term)) {
+    $search_term_escaped = '%' . $conn->real_escape_string($search_term) . '%';
+    $search_condition = " AND (d.title LIKE '$search_term_escaped' OR 
+                           dt.type_name LIKE '$search_term_escaped' OR 
+                           u.full_name LIKE '$search_term_escaped' OR 
+                           o.office_name LIKE '$search_term_escaped' OR
+                           CONCAT('DOC-', LPAD(d.document_id, 3, '0')) LIKE '$search_term_escaped')"; 
+}
+?>
+<!DOCTYPE html>
+<html>
+<head>
+  <link rel="preconnect" href="https://fonts.gstatic.com/" crossorigin="" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?display=swap&amp;family=Noto+Sans%3Awght%40400%3B500%3B700%3B900&amp;family=Plus+Jakarta+Sans%3Awght%40400%3B500%3B700%3B800" />
+  <title>Inbox - SCC DMS</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    body {
+      font-family: "Plus Jakarta Sans", "Noto Sans", sans-serif;
+    }
+    .sidebar {
+      background: rgb(22, 59, 32);
+    }
+    body.dark {
+      background-color: #1E1E1E;
+      color: #E0E0E0;
+    }
+    .loading-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0, 0, 0, 0.5);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      z-index: 9999;
+      visibility: hidden;
+      opacity: 0;
+      transition: visibility 0s, opacity 0.3s;
+    }
+    .loading-overlay.active {
+      visibility: visible;
+      opacity: 1;
+    }
+    
+    /* Right-side notification styles */
+    .notification-container {
+      position: fixed;
+      top: 80px;
+      right: 20px;
+      z-index: 1000;
+      width: 300px;
+      max-width: 90%;
+    }
+    
+    .notification {
+      margin-bottom: 10px;
+      padding: 15px;
+      border-radius: 5px;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      animation: slideIn 0.3s ease-out forwards;
+      opacity: 0;
+      transform: translateX(50px);
+    }
+    
+    .notification-success {
+      background-color: #d1fae5;
+      border-left: 4px solid #10b981;
+      color: #065f46;
+    }
+    
+    .notification-error {
+      background-color: #fee2e2;
+      border-left: 4px solid #ef4444;
+      color: #991b1b;
+    }
+    
+    .notification-warning {
+      background-color: #fff7ed;
+      border-left: 4px solid #f97316;
+      color: #9a3412;
+    }
+    
+    .notification-info {
+      background-color: #eff6ff;
+      border-left: 4px solid #3b82f6;
+      color: #1e40af;
+    }
+    
+    .notification-close {
+      float: right;
+      cursor: pointer;
+      font-size: 18px;
+      font-weight: bold;
+      margin-left: 10px;
+    }
+    
+    @keyframes slideIn {
+      0% {
+        opacity: 0;
+        transform: translateX(50px);
+      }
+      100% {
+        opacity: 1;
+        transform: translateX(0);
+      }
+    }
+    
+    @keyframes fadeOut {
+      0% {
+        opacity: 1;
+        transform: translateX(0);
+      }
+      100% {
+        opacity: 0;
+        transform: translateX(50px);
+      }
+    }
+  </style>
+</head>
+<body class="bg-gray-50">
+  <!-- Notification container -->
+  <div id="notificationContainer" class="notification-container"></div>
+  
+  <!-- Loading Overlay -->
+  <div id="loadingOverlay" class="loading-overlay">
+    <div class="bg-white p-5 rounded-lg shadow-lg flex flex-col items-center">
+      <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-green-700 mb-3"></div>
+      <p class="text-gray-700">Loading...</p>
+    </div>
+  </div>
+
+  <div class="flex pt-[0px]">
+    <main class="flex-1 ml-0 p-6">
+      <div class="mb-6 flex justify-between items-center">
+        <div>
+          <h1 class="text-2xl font-bold">Inbox</h1>
+          <div class="flex items-center text-sm text-gray-500">
+            <a href="dashboard.php" class="hover:text-gray-700">Dashboard</a>
+            <span class="mx-2">/</span>
+            <a href="dashboard.php?page=documents" class="hover:text-gray-700">Documents</a>
+            <span class="mx-2">/</span>
+            <span>Inbox</span>
+          </div>
+        </div>
+        <div class="flex space-x-2">
+          <button id="refreshBtn" class="bg-green-700 text-white px-4 py-2 rounded-lg hover:bg-green-800 flex items-center">
+            <i class="fas fa-sync-alt mr-2"></i> Refresh
+          </button>
+          <button id="exportBtn" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center">
+            <i class="fas fa-file-export mr-2"></i> Export
+          </button>
+        </div>
+      </div>
+
+      <!-- Search Bar -->
+      <div class="w-full mb-6">
+        <form method="GET" action="" class="relative">
+          <input type="text" id="search" name="search" value="<?php echo htmlspecialchars($search_term); ?>" placeholder="Search for documents by title, type, requisitioner or office" class="w-full pl-10 pr-4 py-2 border rounded-lg">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 absolute left-3 top-2.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+          </svg>
+          <button type="submit" class="absolute right-3 top-2 text-blue-600">Search</button>
+        </form>
+      </div>
+
+      <!-- Records Section -->
+      <div class="bg-white rounded-lg shadow">
+        <div class="p-4 border-b flex justify-between items-center">
+          <div class="flex items-center gap-2">
+            <span class="text-sm">Show</span>
+            <select id="entriesPerPage" name="show" class="border rounded px-2 py-1 text-sm" onchange="changeEntriesPerPage(this.value)">
+              <option value="15" <?php echo $items_per_page == 15 ? 'selected' : ''; ?>>15</option>
+              <option value="25" <?php echo $items_per_page == 25 ? 'selected' : ''; ?>>25</option>
+              <option value="50" <?php echo $items_per_page == 50 ? 'selected' : ''; ?>>50</option>
+            </select>
+            <span class="text-sm">entries</span>
+          </div>
+          <div id="documentCount" class="text-sm text-gray-600 font-medium"></div>
+        </div>
+
+        <!-- Table -->
+        <div class="overflow-x-auto">
+          <table class="w-full">
+            <thead>
+              <tr class="text-left border-b bg-gray-50">
+                <th class="p-4 font-medium">Code</th>
+                <th class="p-4 font-medium">Sender</th>
+                <th class="p-4 font-medium">Document Title</th>
+                <th class="p-4 font-medium">Type</th>
+                <th class="p-4 font-medium">From Office</th>
+                <th class="p-4 font-medium">Date</th>
+                <th class="p-4 font-medium">Status</th>
+                <th class="p-4 font-medium text-center">Action</th>
+              </tr>
+            </thead>
+            <tbody id="documentTableBody">
+              <?php
+              if (!isset($_SESSION['office_id'])) {
+                  echo "<tr><td colspan='8' class='text-center py-8 text-gray-500'>Please log in first</td></tr>";
+                  exit();
+              }
+              
+              // Function to fix file path for document preview
+              function fixFilePath($path) {
+                  // Remove any directory separators at the beginning
+                  $path = ltrim($path, '/\\');
+                  
+                  // Replace backslashes with forward slashes for web URLs
+                  $path = str_replace('\\', '/', $path);
+                  
+                  // Ensure the path starts from the root directory
+                  if (strpos($path, '../') === 0) {
+                      $path = substr($path, 3);
+                  } elseif (strpos($path, 'storage/') === 0) {
+                      $path = '../' . $path;
+                  } else {
+                      $path = '../' . $path;
+                  }
+                  
+                  return $path;
+              }
+              
+              // Count total records for pagination
+              if (!isset($_SESSION['office_id']) || empty($_SESSION['office_id'])) {
+                // Handle case where office_id is not set
+                $error_message = "Error: Office ID not set in session. Please log in again.";
+                $total_records = 0;
+                $total_pages = 0;
+              } else {
+                // Debug information
+                echo "<!-- Debug: office_id = {$_SESSION['office_id']} -->";
+                
+                // IMPORTANT: Use a direct, simplified query that matches the notification counter
+                // This query focuses on finding documents where this office has a current workflow step
+                $count_sql = "SELECT COUNT(*) as total 
+                             FROM document_workflow dw 
+                             JOIN documents d ON dw.document_id = d.document_id 
+                             WHERE dw.office_id = {$_SESSION['office_id']} 
+                             AND LOWER(dw.status) = 'current'$search_condition";
+                
+                // Log the query for debugging
+                error_log("Count SQL: $count_sql");
+                
+                $count_result = $conn->query($count_sql);
+                if ($count_result === false) {
+                  // Query failed, handle the error
+                  $error_message = "Database error: " . $conn->error;
+                  echo "<!-- Debug: SQL Error: " . $conn->error . " -->";
+                  $total_records = 0;
+                  $total_pages = 0;
+                } else {
+                  $total_records = $count_result->fetch_assoc()['total'];
+                  $total_pages = ceil($total_records / $items_per_page);
+                  echo "<!-- Debug: Total records found: $total_records -->";
+                }
+              }
+              
+              // Get documents with pagination
+              if (!isset($_SESSION['office_id']) || empty($_SESSION['office_id'])) {
+                $result = false;
+              } else {
+                // IMPORTANT: Use a direct, simplified query that matches the notification counter
+                // This query focuses on finding documents where this office has a current workflow step
+                $sql = "SELECT d.document_id, d.title, d.type_id, d.file_path, d.google_doc_id,
+                        d.creator_id, d.created_at, d.status, dt.type_name, u.full_name as creator_name,
+                        o.office_name as creator_office, dw.status as workflow_status, dw.step_order
+                        FROM document_workflow dw
+                        JOIN documents d ON dw.document_id = d.document_id
+                        LEFT JOIN document_types dt ON d.type_id = dt.type_id
+                        LEFT JOIN users u ON d.creator_id = u.user_id
+                        LEFT JOIN offices o ON u.office_id = o.office_id
+                        WHERE dw.office_id = {$_SESSION['office_id']}
+                        AND LOWER(dw.status) = 'current'$search_condition
+                        ORDER BY d.created_at DESC
+                        LIMIT $offset, $items_per_page";
+                
+                // Log the query for debugging
+                error_log("Main SQL: $sql");
+                        
+                $result = $conn->query($sql);
+                if ($result === false) {
+                  $error_message = "Database error: " . $conn->error;
+                  echo "<!-- Debug: SQL Error: " . $conn->error . " -->";
+                } else {
+                  echo "<!-- Debug: Query executed successfully. Rows returned: " . ($result ? $result->num_rows : 0) . " -->";
+                }
+              }
+              
+              // Add extensive debug information about the query and results
+              echo "<!-- Debug: SQL Query executed: $sql -->";
+              echo "<!-- Debug: Number of results: " . ($result ? $result->num_rows : 'none') . " -->";
+              
+              // Force refresh of the page data to ensure we're seeing the latest information
+              $conn->query("COMMIT");
+              
+              if ($result && $result->num_rows > 0) {
+                while($row = $result->fetch_assoc()) {
+                  $filePath = fixFilePath($row['file_path']);
+                  $documentCode = 'DOC-' . str_pad($row['document_id'], 3, '0', STR_PAD_LEFT);
+                  
+                  // Get document type name
+                  $type_query = "SELECT type_name FROM document_types WHERE type_id = {$row['type_id']}";
+                  $type_result = $conn->query($type_query);
+                  $type_name = ($type_result && $type_result->num_rows > 0) ? $type_result->fetch_assoc()['type_name'] : 'Unknown';
+                  
+                  // Get creator info
+                  $creator_query = "SELECT u.full_name, o.office_name FROM users u 
+                                    JOIN offices o ON u.office_id = o.office_id 
+                                    WHERE u.user_id = {$row['creator_id']}";
+                  $creator_result = $conn->query($creator_query);
+                  $creator_info = ($creator_result && $creator_result->num_rows > 0) ? $creator_result->fetch_assoc() : ['full_name' => 'Unknown', 'office_name' => 'Unknown'];
+                  
+                  $status_class = match(strtolower($row['status'])) {
+                    'approved' => 'badge-approved',
+                    'rejected' => 'badge-rejected',
+                    default => 'badge-pending'
+                  };
+                  
+                  echo "<tr class='hover:bg-gray-50 border-b'>";
+                  echo "<td class='p-4 font-medium'>$documentCode</td>";
+                  echo "<td class='p-4'>" . htmlspecialchars($creator_info['full_name']) . "</td>";
+                  echo "<td class='p-4'>" . htmlspecialchars($row['title']) . "</td>";
+                  echo "<td class='p-4'>" . htmlspecialchars($type_name) . "</td>";
+                  echo "<td class='p-4'>" . htmlspecialchars($creator_info['office_name']) . "</td>";
+                  echo "<td class='p-4'>" . date('M j, Y', strtotime($row['created_at'])) . "</td>";
+                  echo "<td class='p-4'><span class='badge $status_class'>" . ucfirst($row['status']) . "</span></td>";
+                  echo "<td class='p-4'>";
+                  echo "<div class='flex justify-center space-x-2'>";
+                  echo "<a href='dashboard.php?page=approved&id=" . $row['document_id'] . "' class='bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700 text-sm flex items-center'><i class='fas fa-eye mr-1'></i> Review</a>";
+                  
+                  // Check if document has a Google Doc ID
+                  if (!empty($row['google_doc_id'])) {
+                    echo "<a href='dashboard.php?page=view_document&id=" . $row['document_id'] . "' class='bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700 text-sm flex items-center'><i class='fas fa-file-alt mr-1'></i> View</a>";
+                  } else if (!empty($row['file_path'])) {
+                    echo "<a href='dashboard.php?page=view_document&file=" . urlencode($row['file_path']) . "' class='bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700 text-sm flex items-center'><i class='fas fa-file-alt mr-1'></i> View</a>";
+                  } else {
+                    echo "<span class='bg-gray-400 text-white px-3 py-1 rounded text-sm flex items-center'><i class='fas fa-file-alt mr-1'></i> No File</span>";
+                  }
+                  
+                  echo "<div class='hover-actions'>";
+                  echo "<a href='dashboard.php?page=track&id=" . $row['document_id'] . "' class='bg-purple-600 text-white px-3 py-1 rounded hover:bg-purple-700 text-sm flex items-center'><i class='fas fa-route mr-1'></i> Track</a>";
+                  echo "</div>";
+                  echo "</div>";
+                  echo "</td>";
+                  echo "</tr>";
+                }
+              } else {
+                echo "<tr><td colspan='8' class='text-center py-8 text-gray-500'>No pending documents</td></tr>";
+              }
+              ?>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Pagination -->
+        <div class="p-4 border-t flex items-center justify-between">
+          <div class="text-sm text-gray-500">
+            <?php if ($total_records > 0): ?>
+              Showing <?php echo $offset + 1; ?> to <?php echo min($offset + $items_per_page, $total_records); ?> of <?php echo $total_records; ?> entries
+            <?php else: ?>
+              No records found
+            <?php endif; ?>
+          </div>
+          <?php if ($total_pages > 1): ?>
+          <div class="flex items-center gap-2">
+            <a href="?page=<?php echo max(1, $current_page - 1); ?>&show=<?php echo $items_per_page; ?>&search=<?php echo urlencode($search_term); ?>" 
+               class="px-2 py-1 border rounded <?php echo $current_page == 1 ? 'text-gray-400' : 'hover:bg-gray-100'; ?>"
+               <?php echo $current_page == 1 ? 'aria-disabled="true"' : ''; ?>>&lt;</a>
+            
+            <?php
+            $start_page = max(1, min($current_page - 2, $total_pages - 4));
+            $end_page = min($total_pages, max($current_page + 2, 5));
+            
+            for ($i = $start_page; $i <= $end_page; $i++):
+            ?>
+              <a href="?page=<?php echo $i; ?>&show=<?php echo $items_per_page; ?>&search=<?php echo urlencode($search_term); ?>" 
+                 class="px-2 py-1 border rounded <?php echo $i == $current_page ? 'bg-green-700 text-white' : 'hover:bg-gray-100'; ?>">
+                <?php echo $i; ?>
+              </a>
+            <?php endfor; ?>
+            
+            <a href="?page=<?php echo min($total_pages, $current_page + 1); ?>&show=<?php echo $items_per_page; ?>&search=<?php echo urlencode($search_term); ?>" 
+               class="px-2 py-1 border rounded <?php echo $current_page == $total_pages ? 'text-gray-400' : 'hover:bg-gray-100'; ?>"
+               <?php echo $current_page == $total_pages ? 'aria-disabled="true"' : ''; ?>>&gt;</a>
+          </div>
+          <?php endif; ?>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    // Update document count
+    document.getElementById('documentCount').textContent = '<?php echo $total_records; ?> document<?php echo $total_records != 1 ? "s" : ""; ?> found';
+    
+    // Function to change entries per page
+    function changeEntriesPerPage(value) {
+      const url = new URL(window.location.href);
+      url.searchParams.set('show', value);
+      url.searchParams.set('page', 1); // Reset to first page
+      window.location.href = url.toString();
+    }
+    
+    // Search functionality
+    const searchForm = document.querySelector('form');
+    searchForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const searchTerm = document.getElementById('search').value.trim();
+      const url = new URL(window.location.href);
+      
+      if (searchTerm) {
+        url.searchParams.set('search', searchTerm);
+      } else {
+        url.searchParams.delete('search');
+      }
+      
+      url.searchParams.set('page', 1); // Reset to first page
+      window.location.href = url.toString();
+    });
+    
+    // Refresh button functionality
+    document.getElementById('refreshBtn').addEventListener('click', () => {
+      const loadingOverlay = document.getElementById('loadingOverlay');
+      loadingOverlay.classList.add('active');
+      
+      setTimeout(() => {
+        window.location.reload();
+      }, 500);
+    });
+    
+    // Export button functionality
+    document.getElementById('exportBtn').addEventListener('click', () => {
+      // Create a CSV from the table data
+      const table = document.querySelector('table');
+      let csv = [];
+      const rows = table.querySelectorAll('tr');
+      
+      for (const row of rows) {
+        const cols = row.querySelectorAll('th, td');
+        const rowData = [];
+        
+        for (const col of cols) {
+          // Skip the action column
+          if (col.cellIndex !== 7) {
+            rowData.push('"' + (col.textContent.trim().replace(/"/g, '""')) + '"');
+          }
+        }
+        
+        csv.push(rowData.join(','));
+      }
+      
+      // Create and download the CSV file
+      const csvContent = csv.join('\n');
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.setAttribute('href', url);
+      link.setAttribute('download', 'inbox_documents_' + new Date().toISOString().slice(0, 10) + '.csv');
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    });
+    
+    // Notification handling
+    const notificationContainer = document.getElementById('notificationContainer');
+    
+    // Function to display a notification
+    function displayNotification(message, type) {
+      const notification = document.createElement('div');
+      notification.classList.add('notification', `notification-${type}`);
+      notification.innerHTML = `
+        <span>${message}</span>
+        <span class="notification-close">&times;</span>
+      `;
+      
+      notificationContainer.appendChild(notification);
+      
+      // Add event listener to close button
+      notification.querySelector('.notification-close').addEventListener('click', () => {
+        notification.classList.add('fadeOut');
+        setTimeout(() => {
+          notification.remove();
+        }, 300);
+      });
+      
+      // Automatically close notification after 5 seconds
+      setTimeout(() => {
+        notification.classList.add('fadeOut');
+        setTimeout(() => {
+          notification.remove();
+        }, 300);
+      }, 5000);
+    }
+    
+    // Example usage:
+    // displayNotification('Document approved successfully!', 'success');
+    // displayNotification('Error occurred while approving document.', 'error');
+  </script>
+  
+  <script>
+    // Check for notification parameters in URL
+    window.addEventListener('DOMContentLoaded', function() {
+      const urlParams = new URLSearchParams(window.location.search);
+      const notification = urlParams.get('notification');
+      const notificationType = urlParams.get('notification_type');
+      
+      if (notification) {
+        displayNotification(decodeURIComponent(notification), notificationType || 'info');
+        
+        // Remove notification parameters from URL without reloading the page
+        const newUrl = window.location.pathname + 
+                      window.location.search.replace(/[?&]notification=[^&]*/, '')
+                                           .replace(/[?&]notification_type=[^&]*/, '')
+                                           .replace(/^&/, '?');
+        window.history.replaceState({}, document.title, newUrl);
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,95 @@
+@startuml
+
+title SCCDMS2 - Use Case Diagram
+
+skinparam actorStyle awesome
+skinparam usecaseBackgroundColor #E0FFFF
+skinparam usecaseBorderColor #4682B4
+skinparam actorBackgroundColor #FAFAD2
+
+' Define actors
+actor "Document Creator" as Creator
+actor "Document Reviewer" as Reviewer
+actor "Office Head" as OfficeHead
+actor "System Admin" as Admin
+
+rectangle "SCC Document Management System" {
+  ' Use Case 1: Document Creation and Submission
+  usecase "Create & Submit Documents" as UC1
+  usecase "Upload Document" as UC1_1
+  usecase "Create Document with Editor" as UC1_2
+  usecase "Create with Google Docs" as UC1_3
+  
+  ' Use Case 2: Document Workflow Management
+  usecase "Manage Document Workflows" as UC2
+  usecase "Track Document Status" as UC2_1
+  usecase "Move Document to Next Stage" as UC2_2
+  usecase "View Pending Documents" as UC2_3
+  
+  ' Use Case 3: Document Revision Management
+  usecase "Manage Document Revisions" as UC3
+  usecase "Request Document Revision" as UC3_1
+  usecase "Review Revision Requests" as UC3_2
+  usecase "Make Document Revisions" as UC3_3
+  
+  ' Use Case 4: Document Approval Process
+  usecase "Process Document Approvals" as UC4
+  usecase "Approve Document" as UC4_1
+  usecase "Reject Document" as UC4_2
+  usecase "Add Comments/Feedback" as UC4_3
+  
+  ' Use Case 5: Document Tracking and Monitoring
+  usecase "Track & Monitor Documents" as UC5
+  usecase "Search Documents" as UC5_1
+  usecase "View Document History" as UC5_2
+  usecase "Receive Notifications" as UC5_3
+  
+  ' Use Case 6: User and Office Management
+  usecase "Manage Users & Offices" as UC6
+  usecase "Create User Accounts" as UC6_1
+  usecase "Assign User Roles" as UC6_2
+  usecase "Configure Office Workflows" as UC6_3
+}
+
+' Relationships for Document Creation and Submission
+Creator --> UC1
+UC1 <.. UC1_1 : extends
+UC1 <.. UC1_2 : extends
+UC1 <.. UC1_3 : extends
+
+' Relationships for Document Workflow Management
+Reviewer --> UC2
+OfficeHead --> UC2
+UC2 <.. UC2_1 : extends
+UC2 <.. UC2_2 : extends
+UC2 <.. UC2_3 : extends
+
+' Relationships for Document Revision Management
+Reviewer --> UC3
+Creator --> UC3
+UC3 <.. UC3_1 : extends
+UC3 <.. UC3_2 : extends
+UC3 <.. UC3_3 : extends
+
+' Relationships for Document Approval Process
+Reviewer --> UC4
+OfficeHead --> UC4
+UC4 <.. UC4_1 : extends
+UC4 <.. UC4_2 : extends
+UC4 <.. UC4_3 : extends
+
+' Relationships for Document Tracking and Monitoring
+Creator --> UC5
+Reviewer --> UC5
+OfficeHead --> UC5
+UC5 <.. UC5_1 : extends
+UC5 <.. UC5_2 : extends
+UC5 <.. UC5_3 : extends
+
+' Relationships for User and Office Management
+Admin --> UC6
+UC6 <.. UC6_1 : extends
+UC6 <.. UC6_2 : extends
+UC6 <.. UC6_3 : extends
+
+@enduml

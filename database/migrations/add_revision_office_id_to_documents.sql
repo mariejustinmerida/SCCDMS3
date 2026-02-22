@@ -1,0 +1,1 @@
+ALTER TABLE `documents` ADD `revision_requesting_office_id` INT(11) NULL DEFAULT NULL AFTER `google_doc_id`; 

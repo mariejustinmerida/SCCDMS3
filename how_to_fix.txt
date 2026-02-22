@@ -1,0 +1,60 @@
+HOW TO FIX THE ISSUES
+
+I've created new, more robust versions of your scripts that should handle the issues you're experiencing. Here's how to implement these fixes:
+
+ISSUE 1: "Error: Unknown column 'dw.status' in 'where clause'" in incoming.php
+============================================================================
+
+1. I've created a new file called "incoming_fixed.php" that dynamically checks if the status column exists in your document_workflow table and adapts the query accordingly.
+
+2. To implement this fix:
+   - Review the incoming_fixed.php file to understand how it works
+   - Either:
+     a) Rename incoming_fixed.php to incoming.php (replacing the original file)
+     -OR-
+     b) Copy the code from incoming_fixed.php into your existing incoming.php
+
+3. Make sure you run the add_status_column.php script first to add the missing status column to your database
+
+ISSUE 2: "Error: Failed to execute 'json' on 'Response': Unexpected end of JSON input" in compose.php
+================================================================================================
+
+1. I've created a separate debugging version of the document submission process:
+   - api/submit_document_debug.php - A more robust version of the submission API
+   - pages/compose_debug.php - A debug overlay for the compose page
+
+2. To test the new approach:
+   - Access http://localhost/SCCDMS2/pages/compose_debug.php 
+   - Try to submit a document
+   - Check the logs/debug_submit.log file for detailed information about what's happening
+
+3. If the debug version works, you can then:
+   - Review the changes in submit_document_debug.php
+   - Apply those improvements to your submit_document.php file
+
+ADDITIONAL TOOLS
+===============
+
+1. check_table_structure.php - Shows your database structure and helps diagnose issues
+2. add_status_column.php - Adds the missing status column if needed
+
+THE CORE ISSUES
+==============
+
+1. Database Schema Mismatch:
+   - Your code is trying to use a 'status' column in document_workflow that doesn't exist in your database
+   - The fixes either add this column or make the code adapt when it's missing
+
+2. JSON Response Issues:
+   - The improved code handles errors better and ensures proper JSON response formatting
+   - Headers are set properly and error handling is more robust
+
+GETTING STARTED
+=============
+
+1. First, run add_status_column.php to fix your database
+2. Check your database structure using check_table_structure.php
+3. Try the debug version by accessing compose_debug.php
+4. If everything works, apply the changes to your original files
+
+If you continue to have issues, check the log files in the logs directory for more detailed information. 

@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Frontend Notifications</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body class="bg-gray-50 p-8">
+    <h1 class="text-2xl font-bold mb-6">Test Frontend Notifications</h1>
+    
+    <div class="bg-white p-6 rounded-lg shadow-lg mb-6">
+        <h2 class="text-xl font-semibold mb-4">Notification Bell Test</h2>
+        
+        <!-- Notification Bell -->
+        <div class="relative">
+            <button id="notificationBell" class="notification-bell relative p-2 text-gray-600 hover:text-gray-900 focus:outline-none">
+                <i class="fas fa-bell text-xl"></i>
+                <span id="notificationBadge" class="notification-badge absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center hidden">0</span>
+            </button>
+            
+            <!-- Notifications Container -->
+            <div id="notificationsContainer" class="hidden absolute right-0 top-full mt-2 w-80 bg-white border border-gray-200 rounded-lg shadow-lg z-50">
+                <div class="p-4 border-b border-gray-200">
+                    <div class="flex justify-between items-center">
+                        <h3 class="text-lg font-semibold">Notifications</h3>
+                        <button id="closeNotifications" class="text-gray-400 hover:text-gray-600">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="max-h-96 overflow-y-auto">
+                    <div id="notificationsList" class="p-4">
+                        <!-- Notifications will be loaded here -->
+                    </div>
+                    <div id="noNotifications" class="hidden p-4 text-center text-gray-500">
+                        No notifications found
+                    </div>
+                </div>
+                
+                <div class="p-4 border-t border-gray-200">
+                    <button id="markAllRead" class="w-full bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
+                        Mark All as Read
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="bg-white p-6 rounded-lg shadow-lg mb-6">
+        <h2 class="text-xl font-semibold mb-4">Test Buttons</h2>
+        <button id="testLoadNotifications" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 mr-2">
+            Load Notifications
+        </button>
+        <button id="testCreateNotification" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 mr-2">
+            Create Test Notification
+        </button>
+        <button id="testAPI" class="bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700">
+            Test API Directly
+        </button>
+    </div>
+    
+    <div class="bg-white p-6 rounded-lg shadow-lg">
+        <h2 class="text-xl font-semibold mb-4">Console Output</h2>
+        <div id="consoleOutput" class="bg-gray-100 p-4 rounded font-mono text-sm max-h-64 overflow-y-auto">
+            <!-- Console output will appear here -->
+        </div>
+    </div>
+
+    <!-- Include the enhanced notification system -->
+    <script src="assets/js/enhanced-notifications.js"></script>
+    
+    <script>
+        // Console logging function
+        function log(message) {
+            const console = document.getElementById('consoleOutput');
+            const timestamp = new Date().toLocaleTimeString();
+            console.innerHTML += `[${timestamp}] ${message}<br>`;
+            console.scrollTop = console.scrollHeight;
+            console.log(message);
+        }
+        
+        // Test load notifications
+        document.getElementById('testLoadNotifications').addEventListener('click', function() {
+            log('Testing load notifications...');
+            
+            fetch('api/get_notifications.php')
+                .then(response => {
+                    log(`API Response Status: ${response.status}`);
+                    return response.json();
+                })
+                .then(data => {
+                    log(`API Response: ${JSON.stringify(data, null, 2)}`);
+                    
+                    if (data.success && data.notifications) {
+                        log(`Found ${data.notifications.length} notifications`);
+                        
+                        // Update notification badge
+                        const badge = document.getElementById('notificationBadge');
+                        const unreadCount = data.notifications.filter(n => !n.is_read).length;
+                        
+                        if (unreadCount > 0) {
+                            badge.textContent = unreadCount;
+                            badge.classList.remove('hidden');
+                        } else {
+                            badge.classList.add('hidden');
+                        }
+                        
+                        // Display notifications
+                        const notificationsList = document.getElementById('notificationsList');
+                        const noNotifications = document.getElementById('noNotifications');
+                        
+                        if (data.notifications.length > 0) {
+                            notificationsList.innerHTML = '';
+                            noNotifications.classList.add('hidden');
+                            
+                            data.notifications.forEach(notification => {
+                                const notificationElement = document.createElement('div');
+                                notificationElement.className = `p-3 border-b border-gray-200 ${notification.is_read ? '' : 'bg-blue-50'}`;
+                                
+                                const date = new Date(notification.created_at);
+                                const formattedDate = date.toLocaleString();
+                                
+                                notificationElement.innerHTML = `
+                                    <div class="flex justify-between items-start">
+                                        <div>
+                                            <p class="font-medium text-gray-900">${notification.title || 'Notification'}</p>
+                                            <p class="text-sm text-gray-600">${notification.message || ''}</p>
+                                            <p class="text-xs text-gray-400 mt-1">${formattedDate}</p>
+                                        </div>
+                                        ${notification.priority === 'critical' ? '<span class="text-red-500">🚨</span>' : ''}
+                                    </div>
+                                `;
+                                
+                                notificationsList.appendChild(notificationElement);
+                            });
+                        } else {
+                            notificationsList.innerHTML = '';
+                            noNotifications.classList.remove('hidden');
+                        }
+                    } else {
+                        log('API returned error or no notifications');
+                    }
+                })
+                .catch(error => {
+                    log(`API Error: ${error.message}`);
+                });
+        });
+        
+        // Test create notification
+        document.getElementById('testCreateNotification').addEventListener('click', function() {
+            log('Creating test notification...');
+            
+            // This would normally be done through the backend
+            log('Test notification creation would be handled by the backend');
+        });
+        
+        // Test API directly
+        document.getElementById('testAPI').addEventListener('click', function() {
+            log('Testing API directly...');
+            
+            const xhr = new XMLHttpRequest();
+            xhr.open('GET', 'api/get_notifications.php', true);
+            xhr.onreadystatechange = function() {
+                if (xhr.readyState === 4) {
+                    log(`XHR Status: ${xhr.status}`);
+                    log(`XHR Response: ${xhr.responseText}`);
+                }
+            };
+            xhr.send();
+        });
+        
+        // Notification bell click
+        document.getElementById('notificationBell').addEventListener('click', function() {
+            log('Notification bell clicked');
+            const container = document.getElementById('notificationsContainer');
+            container.classList.toggle('hidden');
+            
+            if (!container.classList.contains('hidden')) {
+                // Load notifications when opened
+                document.getElementById('testLoadNotifications').click();
+            }
+        });
+        
+        // Close notifications
+        document.getElementById('closeNotifications').addEventListener('click', function() {
+            document.getElementById('notificationsContainer').classList.add('hidden');
+        });
+        
+        // Mark all as read
+        document.getElementById('markAllRead').addEventListener('click', function() {
+            log('Marking all notifications as read...');
+            
+            fetch('api/mark_all_notifications_read.php', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                log(`Mark all read response: ${JSON.stringify(data)}`);
+                if (data.success) {
+                    // Reload notifications
+                    document.getElementById('testLoadNotifications').click();
+                }
+            })
+            .catch(error => {
+                log(`Mark all read error: ${error.message}`);
+            });
+        });
+        
+        // Initialize
+        log('Frontend notification test page loaded');
+        log('Click "Load Notifications" to test the notification system');
+    </script>
+</body>
+</html>

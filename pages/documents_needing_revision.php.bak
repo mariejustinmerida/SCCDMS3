@@ -1,0 +1,196 @@
+<?php
+require_once '../includes/config.php';
+
+// Start session if not already started
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
+// Check if user is logged in
+if (!isset($_SESSION['user_id'])) {
+    header("Location: login.php");
+    exit();
+}
+
+// Get user information
+$user_id = $_SESSION['user_id'];
+$office_id = $_SESSION['office_id'] ?? 0;
+
+// Pagination settings
+$items_per_page = isset($_GET['show']) ? (int)$_GET['show'] : 15;
+$current_page = isset($_GET['page']) ? max(1, (int)$_GET['page']) : 1;
+$offset = ($current_page - 1) * $items_per_page;
+
+// Search functionality
+$search_term = isset($_GET['search']) ? trim($_GET['search']) : '';
+$search_condition = '';
+if (!empty($search_term)) {
+    $search_term_escaped = '%' . $conn->real_escape_string($search_term) . '%';
+    $search_condition = " AND (d.title LIKE '$search_term_escaped' OR 
+                           dt.type_name LIKE '$search_term_escaped' OR
+                           CONCAT('DOC-', LPAD(d.document_id, 3, '0')) LIKE '$search_term_escaped')"; 
+}
+
+// Get documents that need revision based on workflow entries
+$count_sql = "SELECT COUNT(DISTINCT d.document_id) as total 
+             FROM documents d
+             JOIN document_workflow dw ON d.document_id = dw.document_id
+             WHERE dw.status = 'revision_requested' 
+             AND d.creator_id = ?$search_condition";
+
+$count_stmt = $conn->prepare($count_sql);
+$count_stmt->bind_param("i", $user_id);
+$count_stmt->execute();
+$count_result = $count_stmt->get_result();
+
+if (!$count_result) {
+  $total_records = 0;
+} else {
+  $total_records = $count_result->fetch_assoc()['total'];
+}
+$total_pages = ceil($total_records / $items_per_page);
+
+// Get documents that need revision based on workflow entries
+$sql = "SELECT d.document_id, d.title, dt.type_name, d.created_at, d.status, d.google_doc_id,
+        (SELECT o.office_name FROM document_workflow dw JOIN offices o ON dw.office_id = o.office_id 
+         WHERE dw.document_id = d.document_id AND dw.status = 'revision_requested' LIMIT 1) as requesting_office,
+        (SELECT dw.comments FROM document_workflow dw 
+         WHERE dw.document_id = d.document_id AND dw.status = 'revision_requested' LIMIT 1) as revision_comments,
+        (SELECT COUNT(*) FROM document_workflow dw 
+         WHERE dw.document_id = d.document_id AND dw.comments IS NOT NULL AND dw.comments != '') as has_comments
+        FROM documents d
+        JOIN document_types dt ON d.type_id = dt.type_id 
+        WHERE (d.status = 'revision_requested' OR d.document_id IN (
+            SELECT document_id FROM document_workflow WHERE status = 'revision_requested'
+        ))
+        AND d.creator_id = ?$search_condition
+        ORDER BY d.created_at DESC
+        LIMIT $offset, $items_per_page";
+
+$stmt = $conn->prepare($sql);
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$result = $stmt->get_result();
+?>
+
+<div class="container mx-auto px-4 py-6">
+    <div class="bg-white rounded-lg shadow-md overflow-hidden mb-6">
+        <div class="border-b px-6 py-3 bg-purple-100">
+            <h2 class="text-lg font-semibold text-purple-800 flex items-center">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
+                Documents Needing Revision
+            </h2>
+        </div>
+        
+        <div class="p-6">
+            <div class="mb-4 bg-blue-50 border-l-4 border-blue-500 p-4 text-blue-700">
+                <p class="font-medium">Documents Needing Revision</p>
+                <p>These documents have been returned to you for revision. Please review the comments and make the necessary changes.</p>
+            </div>
+            
+            <?php if ($result && $result->num_rows > 0): ?>
+                <div class="overflow-x-auto">
+                    <table class="w-full">
+                        <thead>
+                            <tr class="text-left border-b bg-gray-50">
+                                <th class="p-3 font-medium">Code</th>
+                                <th class="p-3 font-medium">Title</th>
+                                <th class="p-3 font-medium">Type</th>
+                                <th class="p-3 font-medium">Status</th>
+                                <th class="p-3 font-medium">Comments</th>
+                                <th class="p-3 font-medium text-center">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php while($row = $result->fetch_assoc()): 
+                                $has_comments = !empty($row['revision_comments']) || $row['has_comments'] > 0;
+                                $status_class = $row['status'] === 'revision_requested' ? 'bg-purple-100 text-purple-800' : 'bg-yellow-100 text-yellow-800';
+                            ?>
+                                <tr class="hover:bg-gray-50 border-b <?php echo $has_comments ? 'bg-amber-50' : ''; ?>">
+                                    <td class="p-3 font-medium">DOC-<?php echo str_pad($row['document_id'], 3, '0', STR_PAD_LEFT); ?></td>
+                                    <td class="p-3"><?php echo htmlspecialchars($row['title']); ?></td>
+                                    <td class="p-3"><?php echo htmlspecialchars($row['type_name']); ?></td>
+                                    <td class="p-3">
+                                        <span class="px-2 py-1 rounded-full text-xs font-medium <?php echo $status_class; ?>">
+                                            <?php echo ucfirst($row['status']); ?>
+                                        </span>
+                                    </td>
+                                    <td class="p-3">
+                                        <?php if (!empty($row['revision_comments'])): ?>
+                                            <div class="max-h-20 overflow-y-auto text-sm">
+                                                <?php echo nl2br(htmlspecialchars(substr($row['revision_comments'], 0, 100) . (strlen($row['revision_comments']) > 100 ? '...' : ''))); ?>
+                                            </div>
+                                        <?php elseif($row['has_comments'] > 0): ?>
+                                            <span class="text-amber-600 text-sm">Has comments (view in tracking)</span>
+                                        <?php else: ?>
+                                            <span class="text-gray-400 italic">No comments</span>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td class="p-3">
+                                        <div class="flex justify-center space-x-2">
+                                            <a href="../direct_revise.php?id=<?php echo $row['document_id']; ?>" class="bg-purple-600 text-white px-3 py-1 rounded hover:bg-purple-700 text-sm flex items-center">
+                                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                                </svg>
+                                                Revise
+                                            </a>
+                                            <a href="dashboard.php?page=track&id=<?php echo $row['document_id']; ?>" class="bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700 text-sm flex items-center">
+                                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
+                                                </svg>
+                                                Track
+                                            </a>
+                                            <?php if (!empty($row['google_doc_id'])): ?>
+                                            <a href="https://docs.google.com/document/d/<?php echo htmlspecialchars($row['google_doc_id']); ?>/edit" target="_blank" class="bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700 text-sm flex items-center">
+                                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                                </svg>
+                                                Edit
+                                            </a>
+                                            <?php endif; ?>
+                                        </div>
+                                    </td>
+                                </tr>
+                            <?php endwhile; ?>
+                        </tbody>
+                    </table>
+                </div>
+                
+                <!-- Pagination -->
+                <?php if ($total_pages > 1): ?>
+                <div class="mt-6 flex justify-center">
+                    <div class="inline-flex rounded-md shadow-sm">
+                        <?php if ($current_page > 1): ?>
+                            <a href="?page=documents_needing_revision&p=<?php echo $current_page - 1; ?>&show=<?php echo $items_per_page; ?>&search=<?php echo urlencode($search_term); ?>" class="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-l-md hover:bg-gray-50">
+                                Previous
+                            </a>
+                        <?php endif; ?>
+                        
+                        <?php for ($i = 1; $i <= $total_pages; $i++): ?>
+                            <a href="?page=documents_needing_revision&p=<?php echo $i; ?>&show=<?php echo $items_per_page; ?>&search=<?php echo urlencode($search_term); ?>" class="px-3 py-2 text-sm font-medium <?php echo $i === $current_page ? 'text-blue-600 bg-blue-50 border-blue-500' : 'text-gray-700 bg-white border-gray-300'; ?> border hover:bg-gray-50">
+                                <?php echo $i; ?>
+                            </a>
+                        <?php endfor; ?>
+                        
+                        <?php if ($current_page < $total_pages): ?>
+                            <a href="?page=documents_needing_revision&p=<?php echo $current_page + 1; ?>&show=<?php echo $items_per_page; ?>&search=<?php echo urlencode($search_term); ?>" class="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-r-md hover:bg-gray-50">
+                                Next
+                            </a>
+                        <?php endif; ?>
+                    </div>
+                </div>
+                <?php endif; ?>
+            <?php else: ?>
+                <div class="text-center py-8">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-12 w-12 mx-auto text-gray-400 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    <h3 class="text-lg font-medium text-gray-900 mb-2">No Documents Found</h3>
+                    <p class="text-gray-500">You don't have any documents that need revision at this time.</p>
+                </div>
+            <?php endif; ?>
+        </div>
+    </div>
+</div>
